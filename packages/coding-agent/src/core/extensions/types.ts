@@ -17,6 +17,7 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type {
 	Api,
+	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	ConstrainedSamplingConfig,
@@ -299,6 +300,11 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+export interface SettledRequestCompletionOptions {
+	/** Abort the continuation request. */
+	signal?: AbortSignal;
+}
+
 /**
  * Context passed to extension event handlers.
  */
@@ -342,6 +348,16 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
+	/**
+	 * Complete from the latest successful provider request by preserving its
+	 * model, system prompt, tools, request options, and cache/session identity,
+	 * then appending exactly one user message. Throws when the settled request
+	 * is no longer a prefix of the current conversation state.
+	 */
+	completeFromLatestSettledRequest(
+		content: string | (TextContent | ImageContent)[],
+		options?: SettledRequestCompletionOptions,
+	): Promise<AssistantMessage>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 }
@@ -1656,6 +1672,10 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
+	completeFromLatestSettledRequest: (
+		content: string | (TextContent | ImageContent)[],
+		options?: SettledRequestCompletionOptions,
+	) => Promise<AssistantMessage>;
 	getSystemPrompt: () => string;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 }

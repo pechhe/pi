@@ -68,6 +68,7 @@ export {
 	type SessionShutdownEvent,
 	type SessionStartEvent,
 	type SessionTreeEvent,
+	type SettledRequestCompletionOptions,
 	type ToolCallEvent,
 	type ToolCallEventResult,
 	type ToolDefinition,

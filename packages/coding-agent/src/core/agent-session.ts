@@ -28,9 +28,11 @@ import { contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
+	Context,
 	ImageContent,
 	Model,
 	ProviderHeaders,
+	SimpleStreamOptions,
 	TextContent,
 	Usage,
 } from "@earendil-works/pi-ai/compat";
@@ -283,6 +285,17 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
+interface SettledProviderRequest {
+	sequence: number;
+	model: Model<any>;
+	context: Context;
+	options: SimpleStreamOptions | undefined;
+}
+
+function sameRequestMaterial(left: unknown, right: unknown): boolean {
+	return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function estimateMessagesTokens(messages: AgentMessage[]): number {
 	let tokens = 0;
 	for (const message of messages) {
@@ -362,6 +375,9 @@ export class AgentSession {
 	private _extensionErrorUnsubscriber?: () => void;
 
 	private _modelRuntime: ModelRuntime;
+	private _providerStreamFunction: Agent["streamFunction"];
+	private _providerRequestSequence = 0;
+	private _latestSettledProviderRequest: SettledProviderRequest | undefined;
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -383,6 +399,21 @@ export class AgentSession {
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
+		this._providerStreamFunction = this.agent.streamFunction;
+		this.agent.streamFunction = async (model, context, options) => {
+			const sequence = ++this._providerRequestSequence;
+			const stream = await this._providerStreamFunction(model, context, options);
+			void stream.result().then((message) => {
+				if (
+					message.stopReason !== "error" &&
+					message.stopReason !== "aborted" &&
+					sequence >= (this._latestSettledProviderRequest?.sequence ?? 0)
+				) {
+					this._latestSettledProviderRequest = { sequence, model, context, options };
+				}
+			});
+			return stream;
+		};
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
@@ -404,6 +435,62 @@ export class AgentSession {
 
 	get modelRuntime(): ModelRuntime {
 		return this._modelRuntime;
+	}
+
+	private async _completeFromLatestSettledRequest(
+		content: string | (TextContent | ImageContent)[],
+		signal?: AbortSignal,
+	): Promise<AssistantMessage> {
+		const settled = this._latestSettledProviderRequest;
+		if (!settled) {
+			throw new Error("No successful settled provider request is available");
+		}
+		if (this.agent.state.isStreaming) {
+			throw new Error("Cannot continue a settled request while the agent is streaming");
+		}
+		if (!this.model || !modelsAreEqual(this.model, settled.model)) {
+			throw new Error("The active model no longer matches the latest settled request");
+		}
+		if (settled.options?.reasoning !== undefined && settled.options.reasoning !== this.thinkingLevel) {
+			throw new Error("The thinking level no longer matches the latest settled request");
+		}
+		if (settled.options?.sessionId !== undefined && settled.options.sessionId !== this.sessionId) {
+			throw new Error("The cache session no longer matches the latest settled request");
+		}
+
+		const transformed = this.agent.transformContext
+			? await this.agent.transformContext(this.agent.state.messages, signal)
+			: this.agent.state.messages;
+		const currentMessages = await this.agent.convertToLlm(transformed);
+		if (
+			!sameRequestMaterial(settled.context.systemPrompt, this.agent.state.systemPrompt) ||
+			!sameRequestMaterial(settled.context.tools, this.agent.state.tools)
+		) {
+			throw new Error("The current system prompt or tools no longer match the latest settled request");
+		}
+		if (
+			settled.context.messages.length > currentMessages.length ||
+			!settled.context.messages.every((message, index) => sameRequestMaterial(message, currentMessages[index]))
+		) {
+			throw new Error("The latest settled request is no longer a prefix of the current conversation");
+		}
+
+		const normalizedContent = typeof content === "string" ? [{ type: "text" as const, text: content }] : content;
+		const apiKey = await this.agent.getApiKey?.(settled.model.provider);
+		const stream = await this._providerStreamFunction(
+			settled.model,
+			{
+				systemPrompt: settled.context.systemPrompt,
+				tools: settled.context.tools,
+				messages: [...currentMessages, { role: "user", content: normalizedContent, timestamp: Date.now() }],
+			},
+			{
+				...settled.options,
+				...(apiKey !== undefined ? { apiKey } : {}),
+				signal,
+			},
+		);
+		return stream.result();
 	}
 
 	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
@@ -2440,6 +2527,8 @@ export class AgentSession {
 						}
 					})();
 				},
+				completeFromLatestSettledRequest: (content, options) =>
+					this._completeFromLatestSettledRequest(content, options?.signal),
 				getSystemPrompt: () => this.systemPrompt,
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
 			},

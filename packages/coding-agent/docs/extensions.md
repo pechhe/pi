@@ -1063,6 +1063,30 @@ ctx.compact({
 });
 ```
 
+### ctx.completeFromLatestSettledRequest()
+
+Continues the latest successful provider request by preserving its model, system prompt, tool definitions, request options, and cache/session identity, then appending exactly one user message. The request runs outside the agent loop, so tools are not executed and the returned assistant message is not appended to the conversation automatically.
+
+The method fails closed if the active model, thinking level, cache session, system prompt, tools, or conversation prefix changed after the settled request. This makes it suitable for cache-friendly one-shot operations such as compaction:
+
+```typescript
+pi.on("session_before_compact", async (event, ctx) => {
+  const response = await ctx.completeFromLatestSettledRequest(
+    "Create a dense continuation summary. Return only the summary text and do not call tools.",
+    { signal: event.signal },
+  );
+  const summary = contentText(response.content).trim();
+  return {
+    compaction: {
+      summary,
+      firstKeptEntryId: event.preparation.firstKeptEntryId,
+      tokensBefore: event.preparation.tokensBefore,
+      usage: response.usage,
+    },
+  };
+});
+```
+
 ### ctx.getSystemPrompt()
 
 Returns Pi's current system prompt string.

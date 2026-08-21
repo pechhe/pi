@@ -284,6 +284,10 @@ export class ExtensionRunner {
 	private hasPendingMessagesFn: () => boolean = () => false;
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
+	private completeFromLatestSettledRequestFn: ExtensionContextActions["completeFromLatestSettledRequest"] =
+		async () => {
+			throw new Error("Settled request continuation is not available");
+		};
 	private getSystemPromptFn: () => string = () => "";
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
@@ -347,6 +351,7 @@ export class ExtensionRunner {
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
+		this.completeFromLatestSettledRequestFn = contextActions.completeFromLatestSettledRequest;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 
@@ -742,6 +747,10 @@ export class ExtensionRunner {
 			compact: (options) => {
 				runner.assertActive();
 				runner.compactFn(options);
+			},
+			completeFromLatestSettledRequest: (content, options) => {
+				runner.assertActive();
+				return runner.completeFromLatestSettledRequestFn(content, options);
 			},
 			getSystemPrompt: () => {
 				runner.assertActive();

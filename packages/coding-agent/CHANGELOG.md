@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added extension `ctx.completeFromLatestSettledRequest()` for cache-friendly one-shot continuations that preserve the latest successful provider request prefix and cache identity.
+
 ## [0.84.2] - 2026-08-14
 
 ### New Features

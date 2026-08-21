@@ -98,6 +98,9 @@ describe("ExtensionRunner", () => {
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},
+		completeFromLatestSettledRequest: async () => {
+			throw new Error("No settled request in this runner test");
+		},
 		getSystemPrompt: () => "",
 		getScopedModels: () => [],
 	};

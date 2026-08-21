@@ -2041,6 +2041,8 @@ export class InteractiveMode {
 					}
 				})();
 			},
+			completeFromLatestSettledRequest: (content, options) =>
+				this.session.extensionRunner.createContext().completeFromLatestSettledRequest(content, options),
 			getSystemPrompt: () => this.session.systemPrompt,
 		});
 
