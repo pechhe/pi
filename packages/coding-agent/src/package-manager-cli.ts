@@ -474,6 +474,20 @@ interface SelfUpdatePlan {
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
+	if (process.env.PI_ALLOW_UPSTREAM_SELF_UPDATE !== "1") {
+		console.log(
+			chalk.yellow(
+				`${APP_NAME} self-update is disabled in this pinned fork. Install the next rebased fork release explicitly.`,
+			),
+		);
+		return {
+			packageName: PACKAGE_NAME,
+			installSpec: `${PACKAGE_NAME}@${VERSION}`,
+			version: VERSION,
+			shouldRun: false,
+		};
+	}
+
 	let latestRelease: Awaited<ReturnType<typeof getLatestPiRelease>>;
 	try {
 		latestRelease = await getLatestPiRelease(VERSION, { retry: true });
