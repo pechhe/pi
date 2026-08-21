@@ -473,19 +473,66 @@ interface SelfUpdatePlan {
 	note?: string;
 }
 
+interface ForkRelease {
+	tag_name?: unknown;
+	body?: unknown;
+	assets?: Array<{ name?: unknown; browser_download_url?: unknown }>;
+	draft?: unknown;
+	prerelease?: unknown;
+}
+
+const FORK_RELEASES_URL = "https://api.github.com/repos/pechhe/pi/releases?per_page=30";
+const FORK_ASSET_PREFIX = "earendil-works-pi-coding-agent-";
+
+export function latestForkRelease(releases: ForkRelease[]): SelfUpdatePlan | undefined {
+	const candidates = releases.flatMap((release) => {
+		if (release.draft === true || release.prerelease === true || typeof release.tag_name !== "string") return [];
+		const match = /^warm-prefix-v(\d+\.\d+\.\d+)\.(\d+)$/.exec(release.tag_name);
+		if (!match) return [];
+		const version = `${match[1]}-warm.${match[2]}`;
+		const asset = release.assets?.find(
+			(item) =>
+				typeof item.name === "string" &&
+				item.name.startsWith(FORK_ASSET_PREFIX) &&
+				item.name.endsWith(".tgz") &&
+				typeof item.browser_download_url === "string",
+		);
+		if (!asset || typeof asset.browser_download_url !== "string") return [];
+		return [
+			{
+				version,
+				url: asset.browser_download_url,
+				note: typeof release.body === "string" ? release.body : undefined,
+			},
+		];
+	});
+	candidates.sort((left, right) => {
+		if (isNewerPackageVersion(left.version, right.version)) return -1;
+		if (isNewerPackageVersion(right.version, left.version)) return 1;
+		return 0;
+	});
+	const latest = candidates[0];
+	if (!latest) return undefined;
+	return {
+		packageName: PACKAGE_NAME,
+		installSpec: latest.url,
+		version: latest.version,
+		shouldRun: true,
+		...(latest.note ? { note: latest.note } : {}),
+	};
+}
+
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	if (process.env.PI_ALLOW_UPSTREAM_SELF_UPDATE !== "1") {
-		console.log(
-			chalk.yellow(
-				`${APP_NAME} self-update is disabled in this pinned fork. Install the next rebased fork release explicitly.`,
-			),
-		);
-		return {
-			packageName: PACKAGE_NAME,
-			installSpec: `${PACKAGE_NAME}@${VERSION}`,
-			version: VERSION,
-			shouldRun: false,
-		};
+		const response = await fetch(FORK_RELEASES_URL, {
+			headers: { accept: "application/vnd.github+json", "User-Agent": `${APP_NAME}/${VERSION}` },
+		});
+		if (!response.ok) throw new Error(`Could not query pinned fork releases: HTTP ${response.status}`);
+		const plan = latestForkRelease((await response.json()) as ForkRelease[]);
+		if (!plan) throw new Error("No installable pinned fork release was found");
+		if (force || isNewerPackageVersion(plan.version, VERSION)) return plan;
+		console.log(chalk.green(`${APP_NAME} fork is already up to date (v${VERSION})`));
+		return { ...plan, shouldRun: false };
 	}
 
 	let latestRelease: Awaited<ReturnType<typeof getLatestPiRelease>>;

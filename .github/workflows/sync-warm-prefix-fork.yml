@@ -1,0 +1,121 @@
+name: Sync warm-prefix fork
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * *"
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  BASE_PATCH_TAG: v0.84.2
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest upstream release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          upstream_tag="$(gh api repos/earendil-works/pi/releases/latest --jq .tag_name)"
+          upstream_version="${upstream_tag#v}"
+          fork_tag="warm-prefix-${upstream_tag}.1"
+          echo "upstream_tag=$upstream_tag" >> "$GITHUB_OUTPUT"
+          echo "upstream_version=$upstream_version" >> "$GITHUB_OUTPUT"
+          echo "fork_tag=$fork_tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$fork_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reapply fork patch
+        if: steps.release.outputs.exists != 'true'
+        env:
+          UPSTREAM_TAG: ${{ steps.release.outputs.upstream_tag }}
+          FORK_TAG: ${{ steps.release.outputs.fork_tag }}
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/earendil-works/pi.git || true
+          git fetch upstream --tags
+          git diff --binary "$BASE_PATCH_TAG"..HEAD -- \
+            packages/coding-agent/docs/extensions.md \
+            packages/coding-agent/src/core/agent-session.ts \
+            packages/coding-agent/src/core/extensions/index.ts \
+            packages/coding-agent/src/core/extensions/runner.ts \
+            packages/coding-agent/src/core/extensions/types.ts \
+            packages/coding-agent/src/core/index.ts \
+            packages/coding-agent/src/modes/interactive/interactive-mode.ts \
+            packages/coding-agent/src/package-manager-cli.ts \
+            packages/coding-agent/test/extensions-runner.test.ts \
+            packages/coding-agent/test/fork-update-channel.test.ts \
+            packages/coding-agent/test/settled-request-continuation.test.ts \
+            packages/coding-agent/test/trigger-compact-extension.test.ts \
+            > /tmp/warm-prefix.patch
+          git switch --detach "$UPSTREAM_TAG"
+          git switch -c "sync/$FORK_TAG"
+          git apply --3way /tmp/warm-prefix.patch
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/coding-agent
+          git commit -m "feat(coding-agent): apply warm-prefix extension seam to $UPSTREAM_TAG"
+
+      - name: Install and verify
+        if: steps.release.outputs.exists != 'true'
+        env:
+          UPSTREAM_VERSION: ${{ steps.release.outputs.upstream_version }}
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts
+          npm run build
+          node node_modules/vitest/dist/cli.js --run \
+            packages/coding-agent/test/settled-request-continuation.test.ts \
+            packages/coding-agent/test/fork-update-channel.test.ts
+          node -e '
+            const fs = require("node:fs");
+            const path = "packages/coding-agent/package.json";
+            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+            pkg.version = process.env.UPSTREAM_VERSION + "-warm.1";
+            fs.writeFileSync(path, JSON.stringify(pkg, null, "\t") + "\n");
+          '
+          npm --prefix packages/coding-agent run build
+
+      - name: Package and publish fork release
+        if: steps.release.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_TAG: ${{ steps.release.outputs.fork_tag }}
+          UPSTREAM_TAG: ${{ steps.release.outputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pi-fork-release
+          tarball="$(cd packages/coding-agent && npm pack --ignore-scripts --silent --pack-destination /tmp/pi-fork-release)"
+          git push origin "HEAD:refs/heads/$FORK_TAG"
+          git tag "$FORK_TAG"
+          git push origin "$FORK_TAG"
+          gh release create "$FORK_TAG" "/tmp/pi-fork-release/$tarball" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Pi ${UPSTREAM_TAG#v} warm-prefix fork" \
+            --notes "Automatically rebased the warm-prefix extension seam onto upstream $UPSTREAM_TAG. Patch application, build, and focused continuation/update tests passed."
+
+      - name: Report blocked update
+        if: failure() && steps.release.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_TAG: ${{ steps.release.outputs.fork_tag }}
+          UPSTREAM_TAG: ${{ steps.release.outputs.upstream_tag }}
+        run: |
+          title="Warm-prefix fork update blocked for $UPSTREAM_TAG"
+          if ! gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json title --jq '.[].title' | grep -Fxq "$title"; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "Automatic patching or verification failed while preparing $FORK_TAG. The existing fork release remains authoritative. Inspect workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          fi
