@@ -481,7 +481,7 @@ interface ForkRelease {
 	prerelease?: unknown;
 }
 
-const FORK_RELEASES_URL = "https://api.github.com/repos/pechhe/pi/releases?per_page=30";
+const FORK_RELEASE_URL = "https://api.github.com/repos/pechhe/pi/releases/latest";
 const FORK_ASSET_PREFIX = "earendil-works-pi-coding-agent-";
 
 export function latestForkRelease(releases: ForkRelease[]): SelfUpdatePlan | undefined {
@@ -524,11 +524,11 @@ export function latestForkRelease(releases: ForkRelease[]): SelfUpdatePlan | und
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	if (process.env.PI_ALLOW_UPSTREAM_SELF_UPDATE !== "1") {
-		const response = await fetch(FORK_RELEASES_URL, {
+		const response = await fetch(FORK_RELEASE_URL, {
 			headers: { accept: "application/vnd.github+json", "User-Agent": `${APP_NAME}/${VERSION}` },
 		});
-		if (!response.ok) throw new Error(`Could not query pinned fork releases: HTTP ${response.status}`);
-		const plan = latestForkRelease((await response.json()) as ForkRelease[]);
+		if (!response.ok) throw new Error(`Could not query pinned fork release: HTTP ${response.status}`);
+		const plan = latestForkRelease([(await response.json()) as ForkRelease]);
 		if (!plan) throw new Error("No installable pinned fork release was found");
 		if (force || isNewerPackageVersion(plan.version, VERSION)) return plan;
 		console.log(chalk.green(`${APP_NAME} fork is already up to date (v${VERSION})`));

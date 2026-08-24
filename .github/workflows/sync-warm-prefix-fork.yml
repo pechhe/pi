@@ -47,7 +47,8 @@ jobs:
           set -euo pipefail
           git remote add upstream https://github.com/earendil-works/pi.git || true
           git fetch upstream --tags
-          git diff --binary "$BASE_PATCH_TAG"..HEAD -- \
+          fork_head="$(git rev-parse HEAD)"
+          git diff --binary "$BASE_PATCH_TAG".."$fork_head" -- \
             packages/coding-agent/docs/extensions.md \
             packages/coding-agent/src/core/agent-session.ts \
             packages/coding-agent/src/core/extensions/index.ts \
@@ -61,12 +62,14 @@ jobs:
             packages/coding-agent/test/settled-request-continuation.test.ts \
             packages/coding-agent/test/trigger-compact-extension.test.ts \
             > /tmp/warm-prefix.patch
-          git switch --detach "$UPSTREAM_TAG"
-          git switch -c "sync/$FORK_TAG"
+          # Keep the fork commit as the parent and overlay the upstream release tree.
+          # This creates one squash commit without importing upstream workflow changes,
+          # which GitHub's Actions token is not permitted to push.
+          git read-tree --reset -u "$UPSTREAM_TAG"
+          git restore --source="$fork_head" --staged --worktree .github/workflows
           git apply --3way /tmp/warm-prefix.patch
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/coding-agent
           git commit -m "feat(coding-agent): apply warm-prefix extension seam to $UPSTREAM_TAG"
 
       - name: Install and verify
