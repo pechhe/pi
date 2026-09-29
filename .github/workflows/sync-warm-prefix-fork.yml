@@ -7,10 +7,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
-
-env:
-  BASE_PATCH_TAG: v0.84.2
 
 jobs:
   sync:
@@ -47,8 +43,17 @@ jobs:
           set -euo pipefail
           git remote add upstream https://github.com/earendil-works/pi.git || true
           git fetch upstream --tags
-          fork_head="$(git rev-parse HEAD)"
-          git diff --binary "$BASE_PATCH_TAG".."$fork_head" -- \
+          git fetch origin --tags
+          previous_fork_tag="$(git tag --list 'warm-prefix-v*.1' --sort=-version:refname | head -n 1)"
+          if [[ -z "$previous_fork_tag" ]]; then
+            echo "No previous warm-prefix release tag was found" >&2
+            exit 1
+          fi
+          previous_upstream_tag="${previous_fork_tag#warm-prefix-}"
+          previous_upstream_tag="${previous_upstream_tag%.1}"
+          git rev-parse --verify "refs/tags/$previous_upstream_tag" >/dev/null
+          fork_head="$previous_fork_tag"
+          git diff --binary "$previous_upstream_tag..$fork_head" -- \
             packages/coding-agent/docs/extensions.md \
             packages/coding-agent/src/core/agent-session.ts \
             packages/coding-agent/src/core/extensions/index.ts \
@@ -114,11 +119,10 @@ jobs:
       - name: Report blocked update
         if: failure() && steps.release.outputs.exists != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-          FORK_TAG: ${{ steps.release.outputs.fork_tag }}
           UPSTREAM_TAG: ${{ steps.release.outputs.upstream_tag }}
         run: |
-          title="Warm-prefix fork update blocked for $UPSTREAM_TAG"
-          if ! gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json title --jq '.[].title' | grep -Fxq "$title"; then
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "Automatic patching or verification failed while preparing $FORK_TAG. The existing fork release remains authoritative. Inspect workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          fi
+          {
+            echo "Warm-prefix fork update blocked for $UPSTREAM_TAG."
+            echo "The existing fork release remains authoritative."
+            echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"

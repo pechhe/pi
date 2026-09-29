@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
-	type Context,
 	createAssistantMessageEventStream,
+	getCurrentSystemMessage,
 	getModel,
 	type Model,
 	type SimpleStreamOptions,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
@@ -20,7 +21,7 @@ import { createTestResourceLoader } from "./utilities.ts";
 
 interface SeenRequest {
 	model: Model<any>;
-	context: Context;
+	context: TranscriptContext;
 	options: SimpleStreamOptions | undefined;
 }
 
@@ -93,8 +94,9 @@ describe("settled request continuation", () => {
 		expect(requests).toHaveLength(2);
 		const [source, continuation] = requests;
 		expect(continuation.model).toBe(source.model);
-		expect(continuation.context.systemPrompt).toBe(source.context.systemPrompt);
-		expect(continuation.context.tools).toBe(source.context.tools);
+		expect(getCurrentSystemMessage(continuation.context.messages)).toEqual(
+			getCurrentSystemMessage(source.context.messages),
+		);
 		expect(continuation.options?.sessionId).toBe(source.options?.sessionId);
 		expect(continuation.options?.reasoning).toBe(source.options?.reasoning);
 		expect(continuation.context.messages.slice(0, source.context.messages.length)).toEqual(source.context.messages);
